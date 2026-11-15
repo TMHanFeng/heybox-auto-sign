@@ -6,6 +6,10 @@ on:
     # GitHub cron 可能延迟数分钟，且仓库 60 天无活动会自动停用定时任务
     - cron: '30 1 * * *'
   workflow_dispatch: {}   # 允许在 Actions 页面手动触发
+  # 推送到 main 时立刻跑一次，方便改动后马上验证效果（签到本身幂等，重复签到无副作用）
+  push:
+    branches:
+      - main
 
 # 手动触发与定时任务撞车时排队执行，避免同一账号重复签到
 concurrency:
