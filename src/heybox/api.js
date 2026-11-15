@@ -41,6 +41,8 @@ class HeyboxAppClient extends HttpClient {
       time: String(timeSec),
       imei: this.account.imei,
       heybox_id: this.account.heyboxId,
+      // 签名服务已强制要求 os_version，且必须为纯版本号（如 12 / 13 / 13.0）
+      os_version: APP_PROFILE.os_version,
     });
     const response = await this.get({
       url: `${HKEY_API}?${query}`,
@@ -55,10 +57,12 @@ class HeyboxAppClient extends HttpClient {
     const hkey = tools.toText(result?.hkey);
     const version = tools.toText(result?.version);
     const build = tools.toText(result?.build);
+    const rnd = tools.toText(result?._rnd);
     if (!hkey) throw new Error("hkey接口未返回hkey");
     if (!version) throw new Error("hkey接口未返回version");
     if (!/^\d+$/.test(build)) throw new Error("hkey接口未返回有效build");
-    return { hkey, version, build, time: String(timeSec) };
+    // 新版签名服务会返回 _rnd，接口侧需要一并带回去
+    return { hkey, rnd, version, build, time: String(timeSec) };
   }
 
   buildSignedQuery(path, hkeyResult, extraQuery = {}) {
@@ -70,6 +74,7 @@ class HeyboxAppClient extends HttpClient {
       device_info: this.account.deviceInfo,
       nonce: makeNonce(),
       hkey: hkeyResult.hkey,
+      ...(hkeyResult.rnd ? { _rnd: hkeyResult.rnd } : {}),
       os_type: APP_PROFILE.os_type,
       x_os_type: APP_PROFILE.x_os_type,
       x_client_type: APP_PROFILE.x_client_type,
@@ -128,6 +133,8 @@ class HeyboxAppClient extends HttpClient {
         time: timeSec,
         imei: this.account.imei,
         heybox_id: this.account.heyboxId,
+        // report 模式同样强制要求 os_version
+        os_version: APP_PROFILE.os_version,
       }),
     });
     const rp = hkeyResponse.result?.result || {};

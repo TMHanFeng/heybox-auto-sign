@@ -7,19 +7,26 @@ on:
     - cron: '30 1 * * *'
   workflow_dispatch: {}   # 允许在 Actions 页面手动触发
 
+# 手动触发与定时任务撞车时排队执行，避免同一账号重复签到
+concurrency:
+  group: heybox-daily-sign
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   sign:
+    name: 执行签到
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # v4 还是 node20 运行时（已弃用），v6 起为 node24
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -28,11 +35,44 @@ jobs:
         run: npm ci
 
       - name: Run 小黑盒签到
+        id: sign
         env:
           heybox_ck: ${{ secrets.HEYBOX_CK }}
-        run: node heybox_sign.js
+        # 管道会吞掉退出码（$? 变成 tee 的），这里用 PIPESTATUS 精确取 node 的退出码，
+        # 否则签到失败也会被判成 success。日志同时落盘，供摘要步骤解析。
+        run: |
+          set +e
+          node heybox_sign.js 2>&1 | tee sign.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
 
       - name: Run 0元抽奖盒券
+        id: roll
+        # 抽奖活动的前置任务（Steam 心愿单 / 邀请好友助力 / 购买 DLC）本来就无法自动完成，
+        # 脚本退出码非 0 属于常态，不应该因此把整条工作流判红。签到才是核心。
+        continue-on-error: true
         env:
           heybox_ck: ${{ secrets.HEYBOX_CK }}
-        run: node heybox_roll.js
+        run: |
+          set +e
+          node heybox_roll.js 2>&1 | tee roll.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "::notice::抽奖步骤退出码 $rc（前置任务需手动完成属常态），详情见运行摘要"
+          exit 0
+
+      - name: 输出运行摘要
+        # 失败时也要出摘要，方便在 Actions 首页直接看出原因
+        if: always()
+        env:
+          SIGN_RC: ${{ steps.sign.outputs.rc }}
+          ROLL_RC: ${{ steps.roll.outputs.rc }}
+        run: |
+          node scripts/summarize.js --sign sign.log --roll roll.log > summary.md || true
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "---------- 运行摘要 ----------"
+          cat summary.md
+          echo "签到退出码=${SIGN_RC:-未知} 抽奖退出码=${ROLL_RC:-未知}"

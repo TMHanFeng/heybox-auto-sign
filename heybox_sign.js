@@ -449,11 +449,20 @@ async function runAccount(account, runtime) {
   account.log(`当前总H币: ${snapshot.coin || "未知"}`);
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
-  return { ok: waiting.length === 0, doneCount: done.size };
+  // 签到本身是否成功：只看 sign 类任务。
+  // 「其它日常任务没被脚本自动化」不该把整条工作流判红，那是提示而不是签到失败。
+  const signTasks = snapshot.tasks.filter((task) => isSignTask(task));
+  const signOk = signTasks.length > 0 && signTasks.every((task) => task.state === FINISH_STATE);
+  return { ok: waiting.length === 0, signOk, doneCount: done.size };
 }
 
 async function run() {
-  if (!await $.read_env(HeyboxAccount, DATA_NAME)) return;
+  if (!await $.read_env(HeyboxAccount, DATA_NAME)) {
+    // 没有账号 = 什么都没做，必须让工作流红并说明原因，否则是「绿色的空跑」
+    $.log("未读取到任何账号：请检查仓库 Secret HEYBOX_CK 是否已配置（内容形如 pkey=xxx;x_xhh_tokenid=xxx;）");
+    process.exitCode = 1;
+    return;
+  }
 
   const runtime = { version: "", build: "" };
   const bootClient = new HeyboxAppClient($.userList[0], { runtime });
@@ -463,17 +472,23 @@ async function run() {
   $.log(`当前版本: ${runtime.version} build=${runtime.build}`);
 
   let okCount = 0;
+  let signOkCount = 0;
   for (const account of $.userList) {
     try {
       const result = await runAccount(account, runtime);
       if (result.ok) okCount += 1;
+      if (result.signOk) signOkCount += 1;
     } catch (error) {
       account.log(`任务执行失败: ${error.message}`);
     }
   }
 
   $.log(`\n完成: ${okCount}/${$.userList.length}`);
-  process.exitCode = okCount === $.userList.length ? 0 : 1;
+  // 只有「签到本身」失败才让工作流红；其它日常任务未自动化只记日志。
+  // 账号数为 0（secret 没配）同样判红，避免「绿色的空跑」。
+  const signOk = $.userList.length > 0 && signOkCount === $.userList.length;
+  $.log(`RESULT: sign=${signOk ? "ok" : "fail"} tasks=${okCount}/${$.userList.length}`);
+  process.exitCode = signOk ? 0 : 1;
 }
 
 exports.run = run;
