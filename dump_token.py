@@ -10,7 +10,7 @@
   1) 手机开 USB 调试并连电脑（adb devices 能看到 218a59f8 这类设备）
   2) KernelSU：在管理器里开启「Root authorization for ADB」（设置页），
      使 `adb root` 可用。开启后本脚本即可自动以 root 运行。
-  3) platform-tools 已装，ADB 路径见下方 ADB 常量。
+  3) platform-tools 已装，adb 路径会自动探测（也可用环境变量 ADB 指定）。
 
 用法：
   python dump_token.py
@@ -18,13 +18,38 @@
 """
 import os
 import re
+import shutil
 import subprocess
 import time
 
 PKG = "com.max.xiaoheihe"                         # 小黑盒包名（已确认）
-ADB = r"D:\Desktop\Tools\platform-tools\adb.exe"  # 本机已定位的 adb；换机器请改
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXTRACT_DIR = os.path.join(HERE, "token_dump")
+
+
+def find_adb():
+    """自动定位 adb：环境变量 > 常见安装位置 > PATH。原脚本写死了本机路径，换机器就失效。"""
+    env = os.environ.get("ADB")
+    if env and os.path.exists(env):
+        return env
+    candidates = [
+        r"D:\EVScreenMirror\adb.exe",
+        r"D:\Android\platform-tools\adb.exe",
+        r"C:\platform-tools\adb.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Android\Sdk\platform-tools\adb.exe"),
+        os.path.join(HERE, "platform-tools", "adb.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    found = shutil.which("adb")
+    if found:
+        return found
+    print("[!] 找不到 adb：请设置环境变量 ADB 指向 adb.exe，或把 platform-tools 加入 PATH。")
+    raise SystemExit(1)
+
+
+ADB = find_adb()
 
 # 要找的字段（命中其一即可，优先 pkey + x_xhh_tokenid）
 KEYS = ["pkey", "user_pkey", "x_xhh_tokenid", "user_heybox_id", "tokenid", "heybox_id"]
